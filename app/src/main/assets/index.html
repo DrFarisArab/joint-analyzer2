@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Joint Angle Analyzer</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+<style>
+:root {
+  --bg:     #050d1c;
+  --surf:   #091525;
+  --border: #152038;
+  --teal:   #05c8a5;
+  --teal-d: #09614e;
+  --amber:  #f59e0b;
+  --coral:  #f45f5f;
+  --text:   #d9eeff;
+  --muted:  #3a5470;
+  --sub:    #172540;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { width:100%; height:100%; overflow:hidden; background:#02080f; }
+body {
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  position: relative;
+}
+
+video { display:none; }
+
+#cvs {
+  position: fixed; inset: 0;
+  width: 100vw; height: 100vh;
+  object-fit: cover;
+  display: block;
+  background: #02080f;
+}
+
+/* ─── Top bar ─── */
+#topbar {
+  position: fixed; top: 16px; left: 16px; right: 16px;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  z-index: 40; pointer-events: none;
+}
+#topbar > * { pointer-events: auto; }
+
+#status-pill {
+  display: none; align-items: center; gap: 7px;
+  background: rgba(9,21,37,0.82); border: 1px solid var(--border);
+  border-radius: 20px; padding: 8px 14px; backdrop-filter: blur(6px);
+}
+#sdot { width:7px; height:7px; border-radius:50%; background:var(--sub); flex-shrink:0; transition: background .4s, box-shadow .4s; }
+#sdot.live { background:var(--teal); box-shadow:0 0 7px var(--teal); animation: glow 2s ease-in-out infinite; }
+@keyframes glow { 0%,100%{box-shadow:0 0 6px var(--teal);} 50%{box-shadow:0 0 13px var(--teal);} }
+#stxt { font-size:11px; color:var(--muted); }
+
+#topbtns { display:none; gap:8px; }
+.pill-btn {
+  display:flex; align-items:center; gap:6px;
+  background: rgba(9,21,37,0.82); border:1px solid var(--border);
+  border-radius:20px; padding:9px 16px; color:var(--text);
+  font-size:12px; font-weight:700; cursor:pointer; backdrop-filter:blur(6px);
+  transition: border-color .2s, background .2s;
+}
+.pill-btn:hover { border-color:var(--teal-d); background:rgba(9,21,37,0.95); }
+
+/* ─── HUD ─── */
+#hud {
+  position:fixed; left:0; right:0; bottom:22px;
+  display:flex; flex-wrap:wrap; justify-content:center; gap:14px;
+  padding:0 18px; z-index:35; pointer-events:none;
+}
+#hud > * { pointer-events:auto; }
+
+.hud-card {
+  background: rgba(9,21,37,0.86);
+  border: 1.5px solid var(--teal-d);
+  border-radius: 16px;
+  padding: 15px 26px 13px;
+  text-align: center;
+  min-width: 160px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 6px 28px rgba(0,0,0,0.45);
+}
+.hud-name { font-size: clamp(11px,1.5vw,14px); letter-spacing: 1.8px; text-transform: uppercase; color: var(--teal); font-weight: 800; margin-bottom: 2px; }
+.hud-current {
+  font-size: clamp(34px, 6.5vw, 58px);
+  font-weight: 800; font-family: 'Courier New', Menlo, monospace;
+  line-height: 1.05; letter-spacing: -1px;
+  margin: 2px 0 9px; color: var(--sub); transition: color .2s;
+}
+.hud-minmax { display:flex; gap:18px; justify-content:center; padding-top:8px; border-top:1px solid var(--border); }
+.hud-minmax > div { display:flex; flex-direction:column; align-items:center; }
+.hud-minmax .lbl { font-size:9.5px; letter-spacing:1.5px; color:var(--muted); font-weight:700; margin-bottom:2px; }
+.hud-minmax span:not(.lbl) { font-size: clamp(19px, 3vw, 29px); font-weight:800; font-family:'Courier New', Menlo, monospace; color: var(--text); }
+
+/* ─── Start overlay ─── */
+#overlay { position: fixed; inset:0; background:#02080f; display:flex; align-items:center; justify-content:center; z-index:45; }
+#start-wrap { display:flex; flex-direction:column; align-items:center; gap:14px; max-width:380px; text-align:center; padding:36px; }
+.s-icon { width:68px; height:68px; border:1.5px solid var(--teal-d); border-radius:16px; display:flex; align-items:center; justify-content:center; font-size:34px; background:rgba(5,200,165,0.04); }
+.s-h { font-size:20px; font-weight:700; color:var(--teal); letter-spacing:-.2px; }
+.s-p { font-size:12.5px; color:var(--muted); line-height:1.65; }
+.s-sub { font-size:10px; color:var(--sub); }
+#start-btn { padding:11px 32px; background:var(--teal); color:#02080f; font-size:13px; font-weight:700; letter-spacing:.4px; border:none; border-radius:8px; cursor:pointer; transition:opacity .15s, transform .15s; }
+#start-btn:hover { opacity:.85; transform:translateY(-1px); }
+.spinner { width:38px; height:38px; border:2.5px solid var(--sub); border-top-color:var(--teal); border-radius:50%; animation:spin .7s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* ─── Joint selector ─── */
+#selector-overlay { position:fixed; inset:0; background:rgba(2,8,15,0.93); backdrop-filter:blur(6px); z-index:50; display:none; align-items:center; justify-content:center; padding:20px; }
+#selector-overlay.show { display:flex; }
+#selector-panel { width:100%; max-width:440px; max-height:86vh; overflow-y:auto; background:var(--surf); border:1px solid var(--border); border-radius:18px; padding:22px 22px 18px; }
+#selector-panel::-webkit-scrollbar { width:4px; }
+#selector-panel::-webkit-scrollbar-thumb { background:var(--sub); border-radius:2px; }
+.sel-title { font-size:18px; font-weight:800; color:var(--teal); }
+.sel-sub { font-size:11.5px; color:var(--muted); margin-top:5px; line-height:1.5; }
+.preset-row { display:flex; flex-wrap:wrap; gap:6px; margin:16px 0 12px; }
+.preset-btn { background:transparent; border:1px solid var(--teal-d); color:var(--teal); border-radius:14px; padding:6px 13px; font-size:10.5px; font-weight:700; cursor:pointer; }
+.preset-btn:hover { background:rgba(5,200,165,0.08); }
+.sec-lbl2 { font-size:9.5px; font-weight:800; letter-spacing:1.6px; text-transform:uppercase; color:var(--sub); padding:11px 4px 5px; }
+.sel-row { display:flex; align-items:center; gap:10px; padding:8px 6px; border-radius:8px; cursor:pointer; }
+.sel-row:hover { background:rgba(5,200,165,0.06); }
+.sel-row input { width:17px; height:17px; accent-color:var(--teal); cursor:pointer; flex-shrink:0; }
+.sel-name { font-size:13px; color:var(--text); flex:1; }
+.sel-range { font-size:9.5px; color:var(--sub); white-space:nowrap; }
+.sel-foot-note { font-size:9.5px; color:var(--sub); line-height:1.6; margin-top:14px; padding-top:12px; border-top:1px solid var(--border); }
+.sel-actions { display:flex; gap:10px; margin-top:16px; }
+#sel-cancel { display:none; flex:0 0 auto; background:transparent; border:1px solid var(--border); color:var(--muted); border-radius:9px; padding:12px 18px; font-size:12.5px; font-weight:700; cursor:pointer; }
+#sel-apply { flex:1; background:var(--teal); color:#02080f; border:none; border-radius:9px; padding:12px 18px; font-size:13px; font-weight:800; letter-spacing:.3px; cursor:pointer; }
+#sel-apply:disabled { background:var(--sub); color:var(--muted); cursor:not-allowed; }
+</style>
+</head>
+<body>
+
+<video id="vid" autoplay playsinline muted></video>
+<canvas id="cvs"></canvas>
+
+<div id="topbar">
+  <div id="status-pill"><div id="sdot"></div><span id="stxt">Waiting for camera</span></div>
+  <div id="topbtns">
+    <button class="pill-btn" id="settings-btn">⚙ Joints</button>
+    <button class="pill-btn" id="reset-btn">↺ Reset</button>
+  </div>
+</div>
+
+<div id="hud"></div>
+
+<div id="overlay">
+  <div id="start-wrap">
+    <div class="s-icon">🦴</div>
+    <div class="s-h">Joint Angle Analyzer</div>
+    <div class="s-p">AI-powered goniometry, fullscreen. Pick exactly which joints to track, then watch live angle plus your session's min/max ROM recorded in real time.</div>
+    <button id="start-btn">Enable Camera</button>
+    <span class="s-sub">Requires camera access · Open as local file in Chrome for best results</span>
+  </div>
+</div>
+
+<div id="selector-overlay">
+  <div id="selector-panel">
+    <div class="sel-title">Select Joints to Track</div>
+    <div class="sel-sub">Only checked joints are detected, computed, and shown — everything else is skipped entirely.</div>
+    <div class="preset-row">
+      <button class="preset-btn" data-preset="all">All</button>
+      <button class="preset-btn" data-preset="none">Clear</button>
+      <button class="preset-btn" data-preset="knees">Both Knees</button>
+      <button class="preset-btn" data-preset="hips">Both Hips</button>
+      <button class="preset-btn" data-preset="shoulders">Both Shoulders</button>
+      <button class="preset-btn" data-preset="elbows">Both Elbows</button>
+      <button class="preset-btn" data-preset="ankles">Both Ankles</button>
+    </div>
+    <div id="sel-list"></div>
+    <div class="sel-foot-note">0° = neutral/extended, increases with flexion (AAOS convention) · † = single-camera estimate</div>
+    <div class="sel-actions">
+      <button id="sel-cancel">Cancel</button>
+      <button id="sel-apply" disabled>Start Tracking →</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const JOINTS = [
+  { id:'nk', name:'Neck',        group:'head',  a:'mid_ear', b:'mid_shoulder', c:'mid_hip', flip:true,  max:45,  caveat:true },
+  { id:'tr', name:'Trunk',       group:'head',  a:'mid_shoulder', b:'mid_hip', c:'vert_hip',flip:false, max:90,  caveat:true },
+  { id:'ls', name:'L. Shoulder', group:'upper', a:13, b:11, c:23, flip:false, max:180, caveat:true },
+  { id:'rs', name:'R. Shoulder', group:'upper', a:14, b:12, c:24, flip:false, max:180, caveat:true },
+  { id:'le', name:'L. Elbow',    group:'upper', a:11, b:13, c:15, flip:true,  max:150 },
+  { id:'re', name:'R. Elbow',    group:'upper', a:12, b:14, c:16, flip:true,  max:150 },
+  { id:'lw', name:'L. Wrist',    group:'upper', a:13, b:15, c:19, flip:true,  max:80,  caveat:true },
+  { id:'rw', name:'R. Wrist',    group:'upper', a:14, b:16, c:20, flip:true,  max:80,  caveat:true },
+  { id:'lh', name:'L. Hip',      group:'lower', a:11, b:23, c:25, flip:true,  max:120, caveat:true },
+  { id:'rh', name:'R. Hip',      group:'lower', a:12, b:24, c:26, flip:true,  max:120, caveat:true },
+  { id:'lk', name:'L. Knee',     group:'lower', a:23, b:25, c:27, flip:true,  max:135 },
+  { id:'rk', name:'R. Knee',     group:'lower', a:24, b:26, c:28, flip:true,  max:135 },
+  { id:'la', name:'L. Ankle',    group:'lower', a:25, b:27, c:31, mode:'bidir', maxDF:20, maxPF:50 },
+  { id:'ra', name:'R. Ankle',    group:'lower', a:26, b:28, c:32, mode:'bidir', maxDF:20, maxPF:50 },
+];
+const SEC_LABEL = { head:'Head & Trunk', upper:'Upper Body', lower:'Lower Body' };
+const PRESET_IDS = {
+  all: JOINTS.map(j=>j.id), none:[],
+  knees:['lk','rk'], hips:['lh','rh'], shoulders:['ls','rs'], elbows:['le','re'], ankles:['la','ra'],
+};
+function rangeText(j) {
+  return j.mode==='bidir' ? `DF≤${j.maxDF}° PF≤${j.maxPF}°` : `0–${j.max}°${j.caveat?'†':''}`;
+}
+
+const selList = document.getElementById('sel-list');
+let curSec = null;
+JOINTS.forEach(j => {
+  if (j.group !== curSec) {
+    const lbl = document.createElement('div'); lbl.className='sec-lbl2'; lbl.textContent=SEC_LABEL[j.group]; selList.appendChild(lbl); curSec=j.group;
+  }
+  const row = document.createElement('label'); row.className='sel-row';
+  row.innerHTML=`<input type="checkbox" class="sel-check" data-id="${j.id}"><span class="sel-name">${j.name}</span><span class="sel-range">${rangeText(j)}</span>`;
+  selList.appendChild(row);
+});
+
+function updateApplyState() {
+  document.getElementById('sel-apply').disabled = document.querySelectorAll('.sel-check:checked').length===0;
+}
+selList.addEventListener('change', updateApplyState);
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', ()=>{
+    const ids=PRESET_IDS[btn.dataset.preset];
+    document.querySelectorAll('.sel-check').forEach(cb=>{ cb.checked=ids.includes(cb.dataset.id); });
+    updateApplyState();
+  });
+});
+
+function mid(lm,i,j,W,H){ const a=lm[i],b=lm[j]; if(!a||!b) return null; return {x:(a.x+b.x)/2*W,y:(a.y+b.y)/2*H,v:Math.min(a.visibility??0,b.visibility??0)}; }
+function getPoint(ref,lm,W,H){
+  if(typeof ref==='number'){ const p=lm[ref]; return p?{x:p.x*W,y:p.y*H,v:p.visibility??0}:null; }
+  if(ref==='mid_shoulder') return mid(lm,11,12,W,H);
+  if(ref==='mid_hip')      return mid(lm,23,24,W,H);
+  if(ref==='mid_ear')      return mid(lm,7,8,W,H);
+  if(ref==='vert_hip'){ const h=mid(lm,23,24,W,H); return h?{x:h.x,y:h.y-100,v:h.v}:null; }
+  return null;
+}
+
+function fracColor(v,max){ if(v==null||!max) return '#3a5470'; const f=v/max; return f<0.33?'#f45f5f':f<0.67?'#f59e0b':'#05c8a5'; }
+function calcAngle(ax,ay,bx,by,cx,cy){ const bax=ax-bx,bay=ay-by,bcx=cx-bx,bcy=cy-by; const dot=bax*bcx+bay*bcy; const mag=Math.sqrt(bax**2+bay**2)*Math.sqrt(bcx**2+bcy**2); if(mag<1e-6) return 0; return Math.acos(Math.max(-1,Math.min(1,dot/mag)))*180/Math.PI; }
+
+function drawArc(g,ax,ay,bx,by,cx,cy,col,u){
+  const a1=Math.atan2(ay-by,ax-bx),a2=Math.atan2(cy-by,cx-bx),da=(a2-a1+2*Math.PI)%(2*Math.PI);
+  g.save(); g.beginPath(); g.arc(bx,by,22*u,a1,a2,da>Math.PI); g.strokeStyle=col+'cc'; g.lineWidth=3*u; g.stroke(); g.restore();
+}
+function drawLabel(g,bx,by,ax,ay,cx,cy,text,col,u){
+  const nax=ax-bx,nay=ay-by,ncx=cx-bx,ncy=cy-by;
+  const ma=Math.sqrt(nax**2+nay**2),mc=Math.sqrt(ncx**2+ncy**2);
+  let lx=bx,ly=by-34*u;
+  if(ma>1&&mc>1){ const ux=(nax/ma)+(ncx/mc),uy=(nay/ma)+(ncy/mc),um=Math.sqrt(ux**2+uy**2); if(um>0.1){lx=bx-(ux/um)*38*u;ly=by-(uy/um)*38*u;} }
+  g.save();
+  const fs=Math.round(18*u); g.font=`bold ${fs}px "Courier New",Menlo,monospace`;
+  const tw=g.measureText(text).width,pw=tw+14*u,ph=fs+12*u,r=5*u,rx=lx-pw/2,ry=ly-ph/2;
+  g.fillStyle='rgba(2,8,15,0.88)';
+  g.beginPath(); g.moveTo(rx+r,ry); g.lineTo(rx+pw-r,ry); g.quadraticCurveTo(rx+pw,ry,rx+pw,ry+r); g.lineTo(rx+pw,ry+ph-r); g.quadraticCurveTo(rx+pw,ry+ph,rx+pw-r,ry+ph); g.lineTo(rx+r,ry+ph); g.quadraticCurveTo(rx,ry+ph,rx,ry+ph-r); g.lineTo(rx,ry+r); g.quadraticCurveTo(rx,ry,rx+r,ry); g.closePath(); g.fill();
+  g.strokeStyle=col+'80'; g.lineWidth=1.4*u; g.stroke();
+  g.fillStyle=col; g.textAlign='center'; g.textBaseline='middle'; g.fillText(text,lx,ly); g.restore();
+}
+function drawPlumb(g,x,y,len,u){ g.save(); g.setLineDash([4*u,5*u]); g.strokeStyle='rgba(217,238,255,0.3)'; g.lineWidth=1.6*u; g.beginPath(); g.moveTo(x,y); g.lineTo(x,y-len*u); g.stroke(); g.restore(); }
+
+const SKEL=[[11,12],[11,13],[13,15],[15,17],[15,19],[15,21],[12,14],[14,16],[16,18],[16,20],[16,22],[11,23],[12,24],[23,24],[23,25],[25,27],[27,29],[27,31],[24,26],[26,28],[28,30],[28,32],['mid_ear','mid_shoulder'],['mid_shoulder','mid_hip']];
+
+let selectedJoints=new Set(), stats={};
+
+function resetStats(){ stats={}; selectedJoints.forEach(id=>{ const j=JOINTS.find(x=>x.id===id); stats[id]=j.mode==='bidir'?{maxDF:0,maxPF:0}:{min:null,max:null}; }); }
+
+function buildHud(){
+  const hud=document.getElementById('hud'); hud.innerHTML='';
+  JOINTS.filter(j=>selectedJoints.has(j.id)).forEach(j=>{
+    const labels=j.mode==='bidir'?['DF MAX','PF MAX']:['MIN','MAX'];
+    const card=document.createElement('div'); card.className='hud-card'; card.id=`hud-${j.id}`;
+    card.innerHTML=`<div class="hud-name">${j.name}</div><div class="hud-current" id="hc-${j.id}">—</div><div class="hud-minmax"><div><span class="lbl">${labels[0]}</span><span id="hmin-${j.id}">—</span></div><div><span class="lbl">${labels[1]}</span><span id="hmax-${j.id}">—</span></div></div>`;
+    hud.appendChild(card);
+  });
+}
+
+function openSelector(allowCancel){
+  document.getElementById('sel-cancel').style.display=allowCancel?'block':'none';
+  document.getElementById('sel-apply').textContent=allowCancel?'Apply':'Start Tracking →';
+  document.querySelectorAll('.sel-check').forEach(cb=>{ cb.checked=selectedJoints.has(cb.dataset.id); });
+  updateApplyState();
+  document.getElementById('selector-overlay').classList.add('show');
+}
+function closeSelector(){ document.getElementById('selector-overlay').classList.remove('show'); }
+
+document.getElementById('sel-cancel').addEventListener('click', closeSelector);
+document.getElementById('settings-btn').addEventListener('click', ()=>openSelector(true));
+document.getElementById('sel-apply').addEventListener('click', ()=>{
+  const checked=[...document.querySelectorAll('.sel-check:checked')].map(cb=>cb.dataset.id);
+  if(!checked.length) return;
+  selectedJoints=new Set(checked); resetStats(); buildHud(); closeSelector();
+  document.getElementById('topbtns').style.display='flex';
+});
+document.getElementById('reset-btn').addEventListener('click', ()=>{
+  resetStats();
+  selectedJoints.forEach(id=>{ const a=document.getElementById(`hmin-${id}`); const b=document.getElementById(`hmax-${id}`); if(a)a.textContent='—'; if(b)b.textContent='—'; });
+});
+
+const vid=document.getElementById('vid'), cvs=document.getElementById('cvs'), g=cvs.getContext('2d');
+
+function onResults(res){
+  const W=res.image.width,H=res.image.height;
+  if(cvs.width!==W||cvs.height!==H){cvs.width=W;cvs.height=H;}
+  g.clearRect(0,0,W,H); g.drawImage(res.image,0,0,W,H);
+  const u=W/480, lm=res.poseLandmarks;
+
+  if(!lm||!lm.length){ document.getElementById('sdot').className=''; document.getElementById('stxt').textContent='No person detected'; selectedJoints.forEach(id=>{ const hc=document.getElementById(`hc-${id}`); if(hc){hc.textContent='—';hc.style.color='';} }); return; }
+  document.getElementById('sdot').className='live';
+  document.getElementById('stxt').textContent='Tracking · live';
+
+  g.lineWidth=2.5*u; g.strokeStyle='rgba(5,200,165,0.45)';
+  SKEL.forEach(([a,b])=>{ const A=getPoint(a,lm,W,H),B=getPoint(b,lm,W,H); if(A&&B&&A.v>0.4&&B.v>0.4){g.beginPath();g.moveTo(A.x,A.y);g.lineTo(B.x,B.y);g.stroke();} });
+  for(let i=0;i<lm.length;i++){ if((lm[i].visibility??0)>0.4){ const x=lm[i].x*W,y=lm[i].y*H; g.beginPath();g.arc(x,y,5*u,0,Math.PI*2);g.fillStyle='rgba(5,200,165,0.75)';g.fill(); g.beginPath();g.arc(x,y,2*u,0,Math.PI*2);g.fillStyle='#fff';g.fill(); } }
+
+  JOINTS.forEach(j=>{
+    if(!selectedJoints.has(j.id)) return;
+    const A=getPoint(j.a,lm,W,H),B=getPoint(j.b,lm,W,H),Cp=getPoint(j.c,lm,W,H);
+    const hc=document.getElementById(`hc-${j.id}`);
+    if(!A||!B||!Cp||A.v<0.4||B.v<0.4||Cp.v<0.4){ if(hc){hc.textContent='—';hc.style.color='';} return; }
+
+    const raw=calcAngle(A.x,A.y,B.x,B.y,Cp.x,Cp.y);
+    const st=stats[j.id]; let text,value,max;
+
+    if(j.mode==='bidir'){
+      const dev=raw-90,df=dev<0?Math.round(-dev):0,pf=dev>0?Math.round(dev):0;
+      if(df>st.maxDF)st.maxDF=df; if(pf>st.maxPF)st.maxPF=pf;
+      value=dev<=0?df:pf; max=dev<=0?j.maxDF:j.maxPF; text=dev<=0?`${df}°DF`:`${pf}°PF`;
+      const eMin=document.getElementById(`hmin-${j.id}`); if(eMin)eMin.textContent=`${st.maxDF}°`;
+      const eMax=document.getElementById(`hmax-${j.id}`); if(eMax)eMax.textContent=`${st.maxPF}°`;
+    } else {
+      value=j.flip?Math.round(180-raw):Math.round(raw); max=j.max; text=`${value}°`;
+      if(st.min===null||value<st.min)st.min=value; if(st.max===null||value>st.max)st.max=value;
+      const eMin=document.getElementById(`hmin-${j.id}`); if(eMin)eMin.textContent=`${st.min}°`;
+      const eMax=document.getElementById(`hmax-${j.id}`); if(eMax)eMax.textContent=`${st.max}°`;
+    }
+
+    const col=fracColor(value,max);
+    if(hc){hc.textContent=text;hc.style.color=col;}
+    if(j.id==='tr') drawPlumb(g,B.x,B.y,95,u);
+    drawArc(g,A.x,A.y,B.x,B.y,Cp.x,Cp.y,col,u);
+    drawLabel(g,B.x,B.y,A.x,A.y,Cp.x,Cp.y,text,col,u);
+  });
+}
+
+document.getElementById('start-btn').addEventListener('click', async ()=>{
+  const wrap=document.getElementById('start-wrap');
+  wrap.innerHTML=`<div class="spinner"></div><div class="s-sub" style="margin-top:12px;color:#05c8a5">Starting camera…</div>`;
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1920},height:{ideal:1080},facingMode:'user'}});
+    vid.srcObject=stream;
+    const pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${f}`});
+    pose.setOptions({modelComplexity:1,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+    pose.onResults(onResults);
+    const cam=new Camera(vid,{onFrame:async()=>{await pose.send({image:vid});},width:1920,height:1080});
+    await cam.start();
+    document.getElementById('overlay').style.display='none';
+    document.getElementById('status-pill').style.display='flex';
+    openSelector(false);
+  } catch(err){
+    wrap.innerHTML=`<div style="font-size:30px;margin-bottom:10px">⚠️</div><div style="color:#f45f5f;font-size:13px;margin-bottom:6px">${err.name}</div><div style="color:var(--muted);font-size:11.5px;margin-bottom:14px;max-width:260px;line-height:1.5">${err.message}</div><button onclick="location.reload()" style="padding:9px 24px;background:transparent;border:1px solid var(--teal-d);border-radius:7px;color:var(--teal);cursor:pointer;font-size:12px;font-weight:700;letter-spacing:.4px">↺ Retry</button>`;
+  }
+});
+</script>
+</body>
+</html>
